@@ -292,7 +292,7 @@ for i_episode in range(num_episodes):
             plot_durations()
             break
 
-print('Complete')
+print('Complete training')
 env.render(close=True)
 env.close()
 plt.ioff()
