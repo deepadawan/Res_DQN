@@ -32,10 +32,27 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import torchvision.transforms as T
 
+BATCH_SIZE = 128
+GAMMA = 0.999
+EPS_START = 0.9   
+EPS_END = 0.05
+EPS_DECAY = 200
+iter_param = 100
+num_episodes = 100
+mem_size = 10000
+
+
 env = gym.make('CartPole-v0').unwrapped #Set environment, why unwrap ?
 
-############################# REPLAY MEMORy ? ###################################
-#We now define Replay memory, same thing for Atari programs ?????????????? 
+
+is_ipython = 'inline' in matplotlib.get_backend()
+if is_ipython:
+    from IPython import display 
+    
+plt.ion()
+
+############################# REPLAY MEMORY: OK ###############################
+ 
 
 Transition = namedtuple('Transition',('state','action','next_state','reward'))
 
@@ -60,13 +77,10 @@ class ReplayMemory(object):
         return len(self.memory)
     
     
-################################## Neural Network #############################
-#Neural Network = universal function approximators
-
-
-class DQN(nn.Module):
+################################## Neural Network: OK #########################
+class DDQN(nn.Module):
     def __init__(self):
-        super(DQN,self).__init__()
+        super(DDQN,self).__init__()
         self.conv1 = nn.Conv2d(3,16, kernel_size=5,stride=2)
         self.bn1 = nn.BatchNorm2d(16)
         #16*18*38
@@ -128,24 +142,13 @@ plt.title('Example extracted screen')
 plt.show()
 
 
-############################# HYPERPARAMETERS #################################
-BATCH_SIZE = 8
-GAMMA = 0.999
-EPS_START = 0.9   #epsilon greedy policy, EXPLORATION/EXPLOITATION
-EPS_END = 0.05
-EPS_DECAY = 200
-
-model = DQN()
-
-optimizer = optim.RMSprop(model.parameters())
-memory = ReplayMemory(10000)
-
-#EPSILON-GREEDY : Choose a random action with probability epsilon
-
+############################# HYPERPARAMETERS: OK #############################
+model_beta = DDQN()
+model_beta_0 = deepcopy(model_beta)
+optimizer = optim.RMSprop(model_beta.parameters())
+memory = ReplayMemory(mem_size)
 
 steps_done = 0
-
-
 def select_action(state):
     global steps_done               #Outside function variable
     sample = random.random()        #Uniform [0,1] sample
@@ -155,7 +158,7 @@ def select_action(state):
     #Definition of the decay of epsilon greedy policy
     
     if sample > eps_threshold:
-        return model(
+        return model_beta(
             Variable(state, volatile=True).type(torch.FloatTensor)).data.max(1)[1]
             #~~~~~~ Take maximum action of next state
     else:
@@ -164,9 +167,29 @@ def select_action(state):
 
 
 ########################## Plot ? ############################################
+episode_durations = []
+def plot_durations():
+    plt.figure(2)
+    plt.clf()
+    durations_t = torch.FloatTensor(episode_durations)
+    plt.title('Training...')
+    plt.xlabel('Episode')
+    plt.ylabel('Duration')
+    plt.plot(durations_t.numpy())
+    # Take 100 episode averages and plot them too
+    if len(durations_t) >= 100:
+        means = durations_t.unfold(0, 100, 1).mean(1).view(-1)
+        means = torch.cat((torch.zeros(99), means))
+        plt.plot(means.numpy())
+
+    plt.pause(0.001)  # pause a bit so that plots are updated
+    if is_ipython:
+        display.clear_output(wait=True)
+        display.display(plt.gcf())
+
+
 ############################# TRAINING ########################################
 last_sync = 0
-model_0 = model
 def optimize_model():
     global last_sync
     if len(memory) < BATCH_SIZE:   
@@ -186,11 +209,11 @@ def optimize_model():
     action_batch = Variable(torch.cat(batch.action))
     reward_batch = Variable(torch.cat(batch.reward))
 
-    state_action_values = model(state_batch).gather(1, action_batch)
+    state_action_values = model_beta(state_batch).gather(1, action_batch)
 
     next_state_values = Variable(torch.zeros(BATCH_SIZE).type(torch.Tensor))
-    arg_max = model(non_final_next_states).max(1)[1]
-    next_state_values[non_final_mask] = model_0(non_final_next_states)[arg_max.data]
+    arg_max = model_beta(non_final_next_states).max(1)[1].squeeze()
+    next_state_values[non_final_mask] = torch.index_select(model_beta_0(non_final_next_states), dim = 1, index = arg_max).diag()
 
     next_state_values.volatile = False
 
@@ -202,13 +225,12 @@ def optimize_model():
 
     optimizer.zero_grad()
     loss.backward()
-    for param in model.parameters():
-        param.grad.data.clamp_(-1, 1)
+ 
+#????????????????????????????????????????????????????????????????????????????? 
+    for param in model_beta.parameters():
+        param.grad.data.clamp_(-1, 1)  #Force grad in [0,1]
     optimizer.step()
     
-        
-        
-num_episodes = 100
 counter=0
 for i_episode in range(num_episodes):
     print(i_episode)
@@ -232,17 +254,21 @@ for i_episode in range(num_episodes):
         memory.push(state, action, next_state, reward)
         state = next_state
         optimize_model()
+        counter+=1
+        if counter%iter_param==0:
+            model_beta_0=deepcopy(model_beta)
         if done:
             episode_durations.append(t + 1)
             plot_durations()
+            print(episode_durations)
             break
-        counter+=1
-        if counter%20==0:
-            model_0=model
+
+
+#???????????????????????????????????????????????????????????????????????????????
 
 print('Complete')
-env.render(close=True)
-env.close()
-plt.ioff()
-plt.show()
+env.render(close=True) #?
+env.close() #?
+plt.ioff() #?
+plt.show() #?
         
