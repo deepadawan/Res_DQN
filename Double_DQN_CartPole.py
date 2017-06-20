@@ -13,18 +13,13 @@ Created on Mon Jun 12 17:06:17 2017
 
 @author: lamsadeuser
 """
-
 import gym
-import math
 import random
-import numpy as np 
-import matplotlib 
+import numpy as np
 import matplotlib.pyplot as plt
 from collections import namedtuple
 from PIL import Image
-from itertools import count
 from copy import deepcopy
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -32,28 +27,8 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import torchvision.transforms as T
 
-BATCH_SIZE = 128
-GAMMA = 0.999
-EPS_START = 0.9   
-EPS_END = 0.05
-EPS_DECAY = 200
-iter_param = 100
-num_episodes = 100
-mem_size = 10000
-
-
-env = gym.make('CartPole-v0').unwrapped #Set environment, why unwrap ?
-
-
-is_ipython = 'inline' in matplotlib.get_backend()
-if is_ipython:
-    from IPython import display 
-    
-plt.ion()
-
+env = gym.make('CartPole-v0').unwrapped 
 ############################# REPLAY MEMORY: OK ###############################
- 
-
 Transition = namedtuple('Transition',('state','action','next_state','reward'))
 
 class ReplayMemory(object):
@@ -63,13 +38,14 @@ class ReplayMemory(object):
         self.memory = []
         self.position = 0
 
+#??????????????????????????????????????????????????????????????????????????????
     def push(self, *args):
         """Saves a transition."""
         if len(self.memory) < self.capacity:
             self.memory.append(None)
         self.memory[self.position] = Transition(*args)
-        self.position = (self.position + 1) % self.capacity   # % = modulo
-    
+        self.position = (self.position + 1) % self.capacity   
+ #?????????????????????????????????????????????????????????????????????????????   
     def sample(self, batch_size):
         return random.sample(self.memory, batch_size)
     
@@ -77,10 +53,14 @@ class ReplayMemory(object):
         return len(self.memory)
     
     
+    
 ################################## Neural Network: OK #########################
+
+
 class DDQN(nn.Module):
     def __init__(self):
         super(DDQN,self).__init__()
+        #3*40*80
         self.conv1 = nn.Conv2d(3,16, kernel_size=5,stride=2)
         self.bn1 = nn.BatchNorm2d(16)
         #16*18*38
@@ -98,12 +78,14 @@ class DDQN(nn.Module):
         x = F.relu(self.bn3(self.conv3(x)))
         return self.head(x.view(x.size(0),-1))
     
-############################# Image Processing ? ################################
+    
+    
+############################# Image Processing ? ##############################
+#??????????????????????????????????????????????????????????????????????????????
 resize = T.Compose([T.ToPILImage(),
                     T.Scale(40, interpolation=Image.CUBIC),
                     T.ToTensor()])
 screen_width = 600
-#SIZE = 3*40*80
 
 def get_cart_location():
     world_width = env.x_threshold * 2
@@ -133,142 +115,152 @@ def get_screen():
     screen = torch.from_numpy(screen)
     # Resize, and add a batch dimension (BCHW)
     return resize(screen).unsqueeze(0).type(torch.Tensor)
-
-env.reset()
-plt.figure()
-plt.imshow(get_screen().cpu().squeeze(0).permute(1, 2, 0).numpy(),
-           interpolation='none')
-plt.title('Example extracted screen')
-plt.show()
-
-
+#??????????????????????????????????????????????????????????????????????????????
 ############################# HYPERPARAMETERS: OK #############################
+
+
+BATCH_SIZE = 32
+GAMMA = 0.99
+EPS_START = 1   
+EPS_END = 0.1
+i_END = 50
+iter_param = 200
+num_episodes = 500
+mem_size = 10000
+lr = 1e-3
+momentum = 0.9
 model_beta = DDQN()
-model_beta_0 = deepcopy(model_beta)
-optimizer = optim.RMSprop(model_beta.parameters())
-memory = ReplayMemory(mem_size)
-
-steps_done = 0
-def select_action(state):
-    global steps_done               #Outside function variable
-    sample = random.random()        #Uniform [0,1] sample
-    eps_threshold = EPS_END + (EPS_START - EPS_END) * \
-        math.exp(-1. * steps_done / EPS_DECAY)
-    steps_done += 1
-    #Definition of the decay of epsilon greedy policy
-    
-    if sample > eps_threshold:
-        return model_beta(
-            Variable(state, volatile=True).type(torch.FloatTensor)).data.max(1)[1]
-            #~~~~~~ Take maximum action of next state
-    else:
-        return torch.LongTensor([[random.randrange(2)]])
-        #Choose a random action between left and right
-
-
-########################## Plot ? ############################################
-episode_durations = []
-def plot_durations():
-    plt.figure(2)
-    plt.clf()
-    durations_t = torch.FloatTensor(episode_durations)
-    plt.title('Training...')
-    plt.xlabel('Episode')
-    plt.ylabel('Duration')
-    plt.plot(durations_t.numpy())
-    # Take 100 episode averages and plot them too
-    if len(durations_t) >= 100:
-        means = durations_t.unfold(0, 100, 1).mean(1).view(-1)
-        means = torch.cat((torch.zeros(99), means))
-        plt.plot(means.numpy())
-
-    plt.pause(0.001)  # pause a bit so that plots are updated
-    if is_ipython:
-        display.clear_output(wait=True)
-        display.display(plt.gcf())
+optimizer = optim.RMSprop(model_beta.parameters(), lr = lr, momentum = momentum)
 
 
 ############################# TRAINING ########################################
-last_sync = 0
+
+
+
+def select_action(state, eps_threshold):           
+    sample = random.random()        
+    if sample > eps_threshold:
+        return model_beta(Variable(state, volatile=True).type(torch.FloatTensor)).data.max(1)[1]
+    else:
+        return torch.LongTensor([[random.randrange(2)]])
+    
+    
+
 def optimize_model():
-    global last_sync
     if len(memory) < BATCH_SIZE:   
         return
     transitions = memory.sample(BATCH_SIZE)
-
     batch = Transition(*zip(*transitions))
-
     non_final_mask = torch.ByteTensor(tuple(map(lambda s: s is not None,
                                           batch.next_state)))
-
-
     non_final_next_states = Variable(torch.cat([s for s in batch.next_state
                                                 if s is not None]),
                                      volatile=True)
     state_batch = Variable(torch.cat(batch.state))
     action_batch = Variable(torch.cat(batch.action))
     reward_batch = Variable(torch.cat(batch.reward))
-
     state_action_values = model_beta(state_batch).gather(1, action_batch)
-
     next_state_values = Variable(torch.zeros(BATCH_SIZE).type(torch.Tensor))
     arg_max = model_beta(non_final_next_states).max(1)[1].squeeze()
     next_state_values[non_final_mask] = torch.index_select(model_beta_0(non_final_next_states), dim = 1, index = arg_max).diag()
-
     next_state_values.volatile = False
-
     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
-
-
     loss = F.smooth_l1_loss(state_action_values, expected_state_action_values)
-
-
     optimizer.zero_grad()
     loss.backward()
- 
-#????????????????????????????????????????????????????????????????????????????? 
+    #print(torch.mean(model_beta.parameters()))
     for param in model_beta.parameters():
-        param.grad.data.clamp_(-1, 1)  #Force grad in [0,1]
+        vector.append(param)
+        param.grad.data.clamp_(-1, 1)  
     optimizer.step()
     
-counter=0
-for i_episode in range(num_episodes):
-    print(i_episode)
+    
+    
+def eval_model():
     env.reset()
-    last_screen = get_screen()                  #??????????????
-    current_screen = get_screen()               #??????????????
-    state = current_screen - last_screen        #??????????????
-    for t in count():
-        action = select_action(state)
-        _, reward, done, _ = env.step(action[0, 0])
+    last_screen = get_screen()                         
+    current_screen = get_screen()           
+    state = current_screen - last_screen  
+    done=False
+    score=0
+    while not done:
+        action=select_action(state, 0)
+        _, reward, done, _ = env.step(action[0,0])
+        score += reward
+        last_screen = current_screen                            
+        current_screen = get_screen()  
+        state = current_screen - last_screen
+    return score
+
+
+
+counter_iter_param=0
+memory = ReplayMemory(mem_size)
+episode_durations = []
+episode_duration_full_greedy = []
+y_abs_0 = []
+y_abs_1=[]
+plot_Q_value = 1
+plot_durations = 1
+model_beta_0 = deepcopy(model_beta)
+for i_episode in range(num_episodes):
+    env.reset()
+    last_screen = get_screen()              #??               
+    current_screen = get_screen()           #?? 
+    state = current_screen - last_screen    #?? 
+    tot_reward = 0
+    done=False
+    if i_episode <i_END:
+        eps_threshold = i_episode*(EPS_END-EPS_START)/i_END + EPS_START
+    else:
+        eps_threshold = EPS_END
+    while not done:
+        action = select_action(state,eps_threshold)
+        _, reward, done, _ = env.step(action[0, 0])         
+        tot_reward += reward
         reward = torch.Tensor([reward])
-
-
-        last_screen = current_screen            #??????????????
-        current_screen = get_screen()           #??????????????
-        if not done:
-            next_state = current_screen - last_screen
+        last_screen = current_screen                        #?    
+        current_screen = get_screen()                       #?
+        if not done:           
+            next_state = current_screen - last_screen       #?
         else:
             next_state = None
-
         memory.push(state, action, next_state, reward)
+        if i_episode%plot_Q_value==0:
+            temp = model_beta(Variable(state))
+            y_abs_0.append(temp.data.squeeze()[0])
+            y_abs_1.append(temp.data.squeeze()[1])
         state = next_state
         optimize_model()
-        counter+=1
-        if counter%iter_param==0:
+        counter_iter_param+=1
+        if counter_iter_param%iter_param==0:
             model_beta_0=deepcopy(model_beta)
-        if done:
-            episode_durations.append(t + 1)
-            plot_durations()
-            print(episode_durations)
-            break
+    episode_durations.append(tot_reward)
+    print('Episode duration at epoch ', i_episode, ' ', episode_durations[-50:])
+    episode_duration_full_greedy.append(eval_model())
+    if i_episode%plot_Q_value==0:
+        plt.plot(y_abs_0)
+        plt.plot(y_abs_1)
+        plt.title(str(i_episode))
+        plt.xlabel('Number of Updates')
+        plt.ylabel('Q_value')
+        plt.legend(['Left','Right'])
+        plt.show()
+        y_abs_0 = []
+        y_abs_1=[] 
+    if i_episode%plot_durations==0:
+        plt.plot(episode_durations)
+        plt.plot(episode_duration_full_greedy)
+        plt.xlabel('Number of episodes')
+        plt.ylabel('Total Reward')
+        plt.legend(['e_greedy','full_greedy'])
+        plt.show()
+print('Training Complete')
 
 
-#???????????????????????????????????????????????????????????????????????????????
+#Clamp Gradient
+#Memory -> Capacity
+#get-screen
 
-print('Complete')
-env.render(close=True) #?
-env.close() #?
-plt.ioff() #?
-plt.show() #?
+
         
